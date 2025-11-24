@@ -88,3 +88,138 @@ X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, r
 print("훈련 데이터 크기:", X_train.shape)
 print("검증 데이터 크기:", X_val.shape)
 print("테스트 데이터 크기:", X_test.shape)
+
+# Embedding + Encoder(GRU) + Bahdanau Attention + Decoder(GRU) 모델 구현 
+
+
+num_movies = ratings['movieId_encoded'].nunique() + 1   # 영화 개수 + 시작토큰 1개 추가
+START_TOKEN = num_movies - 1                             # 마지막 번호를 START_TOKEN으로 설정 # 전체 아이템 개수
+sequence_length = X.shape[1]                       # 입력 시퀀스 길이
+embedding_dim = 32
+encoder_units = 64
+decoder_units = 64
+batch_size = 256
+
+
+# ============================
+# 2. Bahdanau Attention Layer
+# ============================
+class BahdanauAttention(tf.keras.layers.Layer):
+    def __init__(self, units):
+        super().__init__()
+        self.W1 = tf.keras.layers.Dense(units)
+        self.W2 = tf.keras.layers.Dense(units)
+        self.V = tf.keras.layers.Dense(1)
+
+    def call(self, query, values):
+        # query : decoder hidden state (batch, hidden)
+        # values: encoder outputs (batch, seq_len, hidden)
+
+        query_with_time_axis = tf.expand_dims(query, 1)
+
+        score = self.V(tf.nn.tanh(
+            self.W1(values) + self.W2(query_with_time_axis)
+        ))
+
+        attention_weights = tf.nn.softmax(score, axis=1)
+
+        context_vector = attention_weights * values
+        context_vector = tf.reduce_sum(context_vector, axis=1)
+
+        return context_vector, tf.squeeze(attention_weights, -1)
+
+# ============================
+# 3. Encoder
+# ============================
+class Encoder(tf.keras.Model):
+    def __init__(self, vocab_size, embedding_dim, enc_units):
+        super().__init__()
+        self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
+        self.gru = tf.keras.layers.GRU(enc_units, return_sequences=True, return_state=True)
+
+    def call(self, x):
+        x = self.embedding(x)
+        output, state = self.gru(x)
+        return output, state
+# ============================
+# 4. Decoder
+# ============================
+class Decoder(tf.keras.Model):
+    def __init__(self, vocab_size, embedding_dim, dec_units):
+        super().__init__()
+        self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
+        self.attention = BahdanauAttention(dec_units)
+        self.gru = tf.keras.layers.GRU(dec_units, return_sequences=True, return_state=True)
+        self.fc = tf.keras.layers.Dense(vocab_size)
+
+    def call(self, x, hidden, encoder_outputs):
+        # 1 step decoder input
+        x = self.embedding(x)                           # (batch, 1, embed)
+
+        context_vector, attention_weights = self.attention(hidden, encoder_outputs)
+
+        x = tf.concat([tf.expand_dims(context_vector, 1), x], axis=-1)
+
+        output, state = self.gru(x)
+
+        output = self.fc(tf.reshape(output, (-1, output.shape[2])))
+
+        return output, state, attention_weights
+
+# ============================
+# 5. 모델 구성
+# ============================
+encoder = Encoder(num_movies, embedding_dim, encoder_units)
+decoder = Decoder(num_movies, embedding_dim, decoder_units)
+
+
+
+train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+train_dataset = train_dataset.shuffle(10000).batch(batch_size)
+
+val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val))
+val_dataset = val_dataset.batch(batch_size)
+
+
+
+
+optimizer = tf.keras.optimizers.Adam()
+loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+@tf.function
+def train_step(enc_in, y):
+    loss = 0
+
+    with tf.GradientTape() as tape:
+        # Encoder
+        enc_output, enc_hidden = encoder(enc_in)
+
+        dec_input = tf.fill((enc_in.shape[0], 1), START_TOKEN)
+
+
+        # Decoder 1-step
+        predictions, dec_hidden, attention_w = decoder(dec_input, enc_hidden, enc_output)
+
+        loss = loss_object(y, predictions)
+
+    variables = encoder.trainable_variables + decoder.trainable_variables
+    gradients = tape.gradient(loss, variables)
+    optimizer.apply_gradients(zip(gradients, variables))
+
+    return loss
+
+
+
+EPOCHS = 5
+
+for epoch in range(EPOCHS):
+    total_loss = 0
+    steps = 0
+
+    for enc_in, target in train_dataset:
+        batch_loss = train_step(enc_in, target)
+        total_loss += batch_loss
+        steps += 1
+
+    print(f'Epoch {epoch+1}/{EPOCHS}, Loss: {total_loss / steps}')
+
