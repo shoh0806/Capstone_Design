@@ -68,8 +68,8 @@ y = np.array(y)
 print("전처리 완료")
 print("X shape:", X.shape)
 print("y shape:", y.shape)
-print(X[:3])
-print(y[:3])
+print(X[:10])
+print(y[:10])
 
 
 
@@ -94,22 +94,26 @@ print("테스트 데이터 크기:", X_test.shape)
 
 num_movies = ratings['movieId_encoded'].nunique() + 1   # 영화 개수 + 시작토큰 1개 추가
 START_TOKEN = num_movies - 1                             # 마지막 번호를 START_TOKEN으로 설정 # 전체 아이템 개수
-sequence_length = X.shape[1]                       # 입력 시퀀스 길이
+sequence_length = X.shape[1]                       # 입력 시퀀스 길이 행의 개수는 데이터 개수 ,열의 개수는 sequence 
 embedding_dim = 32
 encoder_units = 64
 decoder_units = 64
 batch_size = 256
 
+# 하이퍼 파라미터를 설정 근데 아직 돌리질 못해서 어딜 수정해야하는지는 모르겠씁니당. 
+
 
 # ============================
 # 2. Bahdanau Attention Layer
 # ============================
+
+# 바다나우 어텐션을 썼습니다. “Decoder의 현재 hidden state”와 “Encoder의 모든 hidden state”를 비교해서 어디에 집중할지 스코어(score)를 계산하는 방식이라고 합니다. 
 class BahdanauAttention(tf.keras.layers.Layer):
     def __init__(self, units):
         super().__init__()
-        self.W1 = tf.keras.layers.Dense(units)
-        self.W2 = tf.keras.layers.Dense(units)
-        self.V = tf.keras.layers.Dense(1)
+        self.W1 = tf.keras.layers.Dense(units)  #Encoder hidden에 곱해줄 가중치 행렬
+        self.W2 = tf.keras.layers.Dense(units)  #W2는 Decoder hidden에 곱해줄 가중치 행렬
+        self.V = tf.keras.layers.Dense(1)               #V는 tanh 결과를 1차원 점수로 만드는 가중치 행렬
 
     def call(self, query, values):
         # query : decoder hidden state (batch, hidden)
