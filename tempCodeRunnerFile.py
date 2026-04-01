@@ -1,2 +1,0 @@
-
-print(ratings.isna().sum())
